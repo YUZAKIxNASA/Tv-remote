@@ -7,6 +7,7 @@ import com.example.data.SavedDevicesRepository
 import com.example.model.CommandResult
 import com.example.model.DeviceConnectionState
 import com.example.model.DiscoveredDevice
+import com.example.model.PairingResult
 import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
@@ -31,7 +32,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     private val discoveryManager = DeviceDiscoveryManager(application, viewModelScope)
     private val savedRepository = SavedDevicesRepository(application)
-    private val protocolDispatcher = ProtocolDispatcher()
+    private val protocolDispatcher = ProtocolDispatcher(application)
 
     private val _currentScreen = MutableStateFlow(AppScreen.DISCOVERY)
     val currentScreen: StateFlow<AppScreen> = _currentScreen.asStateFlow()
@@ -44,6 +45,19 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _lastCommandResult = MutableStateFlow<CommandResult?>(null)
     val lastCommandResult: StateFlow<CommandResult?> = _lastCommandResult.asStateFlow()
+
+    // Pairing dialog & process state
+    private val _isPairingDialogVisible = MutableStateFlow(false)
+    val isPairingDialogVisible: StateFlow<Boolean> = _isPairingDialogVisible.asStateFlow()
+
+    private val _pairingInProgress = MutableStateFlow(false)
+    val pairingInProgress: StateFlow<Boolean> = _pairingInProgress.asStateFlow()
+
+    private val _pairingErrorMessage = MutableStateFlow<String?>(null)
+    val pairingErrorMessage: StateFlow<String?> = _pairingErrorMessage.asStateFlow()
+
+    private val _pairingTargetDevice = MutableStateFlow<DiscoveredDevice?>(null)
+    val pairingTargetDevice: StateFlow<DiscoveredDevice?> = _pairingTargetDevice.asStateFlow()
 
     val isScanning: StateFlow<Boolean> = discoveryManager.isScanning
     val scanStatusMessage: StateFlow<String?> = discoveryManager.scanStatusMessage
@@ -119,7 +133,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             when (val result = protocolDispatcher.verifyDevice(device)) {
                 is ProtocolVerificationResult.Verified -> {
                     _connectionState.value = DeviceConnectionState.Connected(device, result.latencyMs)
-                    // Automatically save verified device
                     savedRepository.saveDevice(device)
                 }
                 is ProtocolVerificationResult.ProtocolUnverified -> {
@@ -128,11 +141,78 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 is ProtocolVerificationResult.PairingRequired -> {
                     _connectionState.value = DeviceConnectionState.PairingRequired(device, result.instructions)
                 }
+                is ProtocolVerificationResult.Unsupported -> {
+                    _connectionState.value = DeviceConnectionState.UnsupportedProtocol(device, result.reason)
+                }
                 is ProtocolVerificationResult.Failed -> {
                     _connectionState.value = DeviceConnectionState.ConnectionFailed(device, result.reason)
                 }
             }
         }
+    }
+
+    fun startPairing(device: DiscoveredDevice? = null) {
+        val target = device ?: _activeDevice.value ?: return
+        _pairingTargetDevice.value = target
+        _pairingErrorMessage.value = null
+        _isPairingDialogVisible.value = true
+
+        viewModelScope.launch {
+            _pairingInProgress.value = true
+            _connectionState.value = DeviceConnectionState.PairingInProgress(target, "Requesting pairing code from TV...")
+            val result = protocolDispatcher.startPairing(target)
+            _pairingInProgress.value = false
+            when (result) {
+                is PairingResult.Success -> {
+                    // Waiting for user to enter PIN
+                }
+                is PairingResult.Failed -> {
+                    _pairingErrorMessage.value = result.reason
+                    _connectionState.value = DeviceConnectionState.PairingRequired(target, result.reason)
+                }
+                is PairingResult.InvalidPin -> {
+                    _pairingErrorMessage.value = result.reason
+                }
+            }
+        }
+    }
+
+    fun submitPairingPin(pin: String) {
+        val target = _pairingTargetDevice.value ?: _activeDevice.value ?: return
+        if (pin.isBlank() || pin.length < 4) {
+            _pairingErrorMessage.value = "Please enter the full 4 to 6 character code displayed on your TV."
+            return
+        }
+
+        viewModelScope.launch {
+            _pairingInProgress.value = true
+            _pairingErrorMessage.value = null
+            _connectionState.value = DeviceConnectionState.PairingInProgress(target, "Verifying PIN with TV...")
+            when (val result = protocolDispatcher.submitPairingPin(target, pin.trim())) {
+                is PairingResult.Success -> {
+                    _pairingInProgress.value = false
+                    _isPairingDialogVisible.value = false
+                    _connectionState.value = DeviceConnectionState.Connected(target, result.latencyMs)
+                    savedRepository.saveDevice(target)
+                }
+                is PairingResult.InvalidPin -> {
+                    _pairingInProgress.value = false
+                    _pairingErrorMessage.value = result.reason
+                    _connectionState.value = DeviceConnectionState.PairingRequired(target, result.reason)
+                }
+                is PairingResult.Failed -> {
+                    _pairingInProgress.value = false
+                    _pairingErrorMessage.value = result.reason
+                    _connectionState.value = DeviceConnectionState.ConnectionFailed(target, result.reason)
+                }
+            }
+        }
+    }
+
+    fun dismissPairingDialog() {
+        _isPairingDialogVisible.value = false
+        _pairingErrorMessage.value = null
+        _pairingInProgress.value = false
     }
 
     fun disconnect() {
@@ -201,5 +281,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun getSupportedCommands(): Set<RemoteCommand> {
         val device = _activeDevice.value ?: return emptySet()
         return protocolDispatcher.getSupportedCommands(device.protocol)
+    }
+
+    fun getProtocolCommands(protocol: RemoteProtocol): Set<RemoteCommand> {
+        return protocolDispatcher.getSupportedCommands(protocol)
     }
 }

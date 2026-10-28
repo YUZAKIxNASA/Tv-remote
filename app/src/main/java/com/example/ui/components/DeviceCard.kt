@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
@@ -25,7 +27,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,13 +40,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.DiscoveredDevice
-import com.example.ui.theme.BorderColor
-import com.example.ui.theme.CardSurface
+import com.example.model.RemoteProtocol
 import com.example.ui.theme.DarkText
+import com.example.ui.theme.GlassBlueGradient
+import com.example.ui.theme.GlassBorder
+import com.example.ui.theme.GlassBorderAccent
+import com.example.ui.theme.GlassBorderLight
+import com.example.ui.theme.GlassCardGradient
+import com.example.ui.theme.GlassSurfaceCard
+import com.example.ui.theme.GlassSurfaceSubtle
 import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.PrimaryBlueLight
-import com.example.ui.theme.SecondaryBg
 import com.example.ui.theme.SecondaryText
+import com.example.ui.theme.WarningStatus
+import com.example.ui.theme.WarningStatusBg
 
 @Composable
 fun DeviceCard(
@@ -51,32 +62,42 @@ fun DeviceCard(
     modifier: Modifier = Modifier,
     isSelected: Boolean = false
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(20.dp)
+    val requiresPairing = device.protocol == RemoteProtocol.ANDROID_TV_REMOTE
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(2.dp, shape, ambientColor = Color(0x0A000000), spotColor = Color(0x1A000000))
+            .shadow(
+                elevation = if (isSelected) 4.dp else 2.dp,
+                shape = shape,
+                ambientColor = Color(0x0A0F172A),
+                spotColor = Color(0x180F172A)
+            )
             .clip(shape)
-            .clickable { onConnect() }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = PrimaryBlue)
+            ) { onConnect() }
             .testTag("device_card_${device.ipAddress}"),
         shape = shape,
-        color = CardSurface,
+        color = GlassSurfaceCard,
         border = BorderStroke(
             width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) PrimaryBlue else BorderColor
+            color = if (isSelected) PrimaryBlue else GlassBorderLight
         )
     ) {
         Row(
             modifier = Modifier
+                .background(GlassCardGradient)
                 .fillMaxWidth()
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // TV Icon circle
+            // TV Icon circle with subtle frosted glow
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(50.dp)
                     .background(PrimaryBlueLight, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -111,7 +132,7 @@ fun DeviceCard(
                             imageVector = Icons.Default.Star,
                             contentDescription = "Saved Device",
                             tint = Color(0xFFF59E0B),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -129,42 +150,67 @@ fun DeviceCard(
                     )
                     Box(
                         modifier = Modifier
-                            .background(SecondaryBg, RoundedCornerShape(6.dp))
+                            .background(GlassSurfaceSubtle, RoundedCornerShape(6.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = device.protocol.displayName,
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 10.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.SemiBold
                             ),
                             color = PrimaryBlue
                         )
                     }
                 }
+
+                if (requiresPairing) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = WarningStatus,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = "PIN Pairing Required",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = WarningStatus
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             Button(
                 onClick = onConnect,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = PrimaryBlue,
+                    containerColor = if (requiresPairing) WarningStatus else PrimaryBlue,
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                modifier = Modifier.testTag("btn_connect_${device.ipAddress}")
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .height(38.dp)
+                    .testTag("btn_connect_${device.ipAddress}")
             ) {
                 Text(
-                    text = "Connect",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+                    text = if (requiresPairing) "Pair" else "Connect",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(14.dp)
                 )
             }
         }

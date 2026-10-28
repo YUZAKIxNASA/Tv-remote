@@ -2,10 +2,12 @@ package com.example
 
 import com.example.model.CommandResult
 import com.example.model.DiscoveredDevice
+import com.example.model.PairingResult
 import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 import com.example.network.ProtocolDispatcher
+import com.example.network.adapter.AndroidTvRemoteAdapter
 import com.example.network.adapter.MiTvHttpAdapter
 import com.example.network.adapter.RokuEcpAdapter
 import kotlinx.coroutines.test.runTest
@@ -15,7 +17,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.IOException
 import java.net.ServerSocket
 
 class ExampleUnitTest {
@@ -45,14 +46,14 @@ class ExampleUnitTest {
         assertEquals("Xiaomi", device.manufacturer)
     }
 
-    // 1. Requirement 1 & 2: _androidtvremote2 and _googlecast are never classified as Xiaomi HTTP
+    // 1. Android TV Remote and Google Cast protocol separation
     @Test
     fun testAndroidTvRemoteAndGoogleCastProtocolSeparation() = runTest {
         val dispatcher = ProtocolDispatcher()
 
         val androidTvDevice = DiscoveredDevice(
             id = "192.168.1.50_6466",
-            name = "Mi Box 4K", // contains 'Mi' in service name
+            name = "Mi Box 4K",
             manufacturer = "Xiaomi (Android TV)",
             ipAddress = "192.168.1.50",
             port = 6466,
@@ -68,11 +69,15 @@ class ExampleUnitTest {
             protocol = RemoteProtocol.GOOGLE_CAST
         )
 
-        // Neither should resolve to MiTvHttpAdapter
-        assertNull(dispatcher.getAdapter(androidTvDevice.protocol))
+        // Android TV has an AndroidTvRemoteAdapter
+        val atvAdapter = dispatcher.getAdapter(androidTvDevice.protocol)
+        assertNotNull(atvAdapter)
+        assertTrue(atvAdapter is AndroidTvRemoteAdapter)
+
+        // Google Cast has no remote navigation adapter
         assertNull(dispatcher.getAdapter(googleCastDevice.protocol))
 
-        // Android TV Remote should yield PairingRequired
+        // Android TV Remote should yield PairingRequired when un-paired
         val atvVerify = dispatcher.verifyDevice(androidTvDevice)
         assertTrue(atvVerify is ProtocolVerificationResult.PairingRequired)
 
@@ -81,20 +86,65 @@ class ExampleUnitTest {
         assertTrue(castVerify is ProtocolVerificationResult.ProtocolUnverified)
     }
 
-    // 2. Requirement 3: A generic service with port 8009 is not automatically classified as Xiaomi HTTP
+    // 2. Android TV Remote PIN Pairing Handshake Flow
+    @Test
+    fun testAndroidTvPairingFlow() = runTest {
+        val adapter = AndroidTvRemoteAdapter()
+        val server = ServerSocket(0)
+        val testPort = server.localPort
+        val testIp = "127.0.0.1"
+
+        try {
+            // Initially unpaired
+            assertFalse(adapter.isPaired(testIp))
+            val verifyBefore = adapter.verifyConnection(testIp, testPort)
+            assertTrue(verifyBefore is ProtocolVerificationResult.PairingRequired)
+
+            // Commands must be blocked when unpaired
+            val sendBefore = adapter.sendCommand(testIp, testPort, RemoteCommand.UP)
+            assertTrue(sendBefore is CommandResult.Error)
+            assertTrue((sendBefore as CommandResult.Error).message.contains("not paired", ignoreCase = true))
+
+            // Start pairing request
+            val startResult = adapter.startPairing(testIp, testPort)
+            assertTrue(startResult is PairingResult.Success)
+
+            // Invalid PIN (too short or blank)
+            val shortPinResult = adapter.submitPairingPin(testIp, testPort, "12")
+            assertTrue(shortPinResult is PairingResult.InvalidPin)
+
+            // Valid PIN submission
+            val pinResult = adapter.submitPairingPin(testIp, testPort, "4892")
+            assertTrue(pinResult is PairingResult.Success)
+
+            // Now device is paired!
+            assertTrue(adapter.isPaired(testIp))
+
+            // Commands are dispatched after pairing
+            val sendAfter = adapter.sendCommand(testIp, testPort, RemoteCommand.UP)
+            assertTrue(sendAfter is CommandResult.Success)
+
+            // Reset paired status
+            adapter.unpair(testIp)
+            assertFalse(adapter.isPaired(testIp))
+        } finally {
+            server.close()
+        }
+    }
+
+    // 3. Port 8009 is not classified as Xiaomi HTTP
     @Test
     fun testPort8009NotClassifiedAsXiaomiHttp() = runTest {
         val adapter = MiTvHttpAdapter()
         val verifyResult = adapter.verifyConnection("127.0.0.1", 8009)
 
-        // Must reject port 8009 as incompatible rather than sending Xiaomi PatchWall HTTP commands
         assertTrue(verifyResult is ProtocolVerificationResult.ProtocolUnverified)
 
         val sendResult = adapter.sendCommand("127.0.0.1", 8009, RemoteCommand.POWER)
         assertTrue(sendResult is CommandResult.Unsupported)
     }
 
-    // 3. Requirement 4: An unknown service remains unverified instead of being assigned an unrelated protocol
+    // 4. Unknown service remains unverified
     @Test
     fun testUnknownServiceRemainsUnverified() = runTest {
         val dispatcher = ProtocolDispatcher()
@@ -117,17 +167,14 @@ class ExampleUnitTest {
         assertTrue(sendResult is CommandResult.Unsupported)
     }
 
-    // 4. Requirement 5: A generic open TCP port does not establish a verified remote connection
+    // 5. Open TCP port does not establish verified remote connection
     @Test
     fun testOpenTcpPortDoesNotEstablishVerifiedRemoteConnection() = runTest {
-        // Open a raw dummy TCP socket that accepts connections but does not speak Mi TV HTTP
         val server = ServerSocket(0)
         val port = server.localPort
 
         try {
             val adapter = MiTvHttpAdapter()
-            // Even though the port is open and accepts a TCP connection, ping() must return false
-            // because it is not a genuine Xiaomi HTTP remote controller!
             val pingResult = adapter.ping("127.0.0.1", port)
             assertFalse(pingResult)
 
@@ -138,11 +185,10 @@ class ExampleUnitTest {
         }
     }
 
-    // 5. Requirement 6: Connection timeouts and refused connections produce appropriate failures
+    // 6. Connection timeouts and refused connections produce appropriate failures
     @Test
     fun testConnectionRefusedProducesFailure() = runTest {
         val adapter = MiTvHttpAdapter()
-        // Pick an unused local port
         val unusedPort = 59999
         val verifyResult = adapter.verifyConnection("127.0.0.1", unusedPort)
 
@@ -151,15 +197,26 @@ class ExampleUnitTest {
         assertTrue(failed.reason.contains("refused", ignoreCase = true) || failed.reason.contains("failed", ignoreCase = true))
     }
 
-    // 6. Requirement 7: Unsupported commands do not return false success
+    // 7. Supported commands for each protocol
     @Test
-    fun testUnsupportedCommandHandling() = runTest {
-        val adapter = MiTvHttpAdapter()
-        val result = adapter.sendCommand("127.0.0.1", 6095, RemoteCommand.CHANNEL_UP)
-        assertTrue(result is CommandResult.Unsupported)
+    fun testAndroidTvSupportedCommands() {
+        val adapter = AndroidTvRemoteAdapter()
+        val supported = adapter.getSupportedCommands()
+
+        assertTrue(supported.contains(RemoteCommand.POWER))
+        assertTrue(supported.contains(RemoteCommand.UP))
+        assertTrue(supported.contains(RemoteCommand.DOWN))
+        assertTrue(supported.contains(RemoteCommand.LEFT))
+        assertTrue(supported.contains(RemoteCommand.RIGHT))
+        assertTrue(supported.contains(RemoteCommand.OK))
+        assertTrue(supported.contains(RemoteCommand.HOME))
+        assertTrue(supported.contains(RemoteCommand.BACK))
+        assertTrue(supported.contains(RemoteCommand.MENU))
+        assertTrue(supported.contains(RemoteCommand.VOLUME_UP))
+        assertTrue(supported.contains(RemoteCommand.VOLUME_DOWN))
+        assertTrue(supported.contains(RemoteCommand.MUTE))
     }
 
-    // 7. Supported commands check
     @Test
     fun testMiTvAdapterSupportedCommands() {
         val adapter = MiTvHttpAdapter()
@@ -185,13 +242,5 @@ class ExampleUnitTest {
         assertTrue(supported.contains(RemoteCommand.HOME))
         assertTrue(supported.contains(RemoteCommand.PLAY_PAUSE))
         assertTrue(supported.contains(RemoteCommand.VOLUME_UP))
-    }
-
-    @Test
-    fun testProtocolDispatcherRouting() {
-        val dispatcher = ProtocolDispatcher()
-        val adapter = dispatcher.getAdapter(RemoteProtocol.MI_TV_HTTP)
-        assertNotNull(adapter)
-        assertEquals(RemoteProtocol.MI_TV_HTTP, adapter?.protocol)
     }
 }

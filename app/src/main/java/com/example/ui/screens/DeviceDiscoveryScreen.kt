@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,15 +27,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -68,13 +67,19 @@ import androidx.compose.ui.unit.sp
 import com.example.model.DiscoveredDevice
 import com.example.model.RemoteProtocol
 import com.example.ui.components.DeviceCard
-import com.example.ui.theme.BorderColor
-import com.example.ui.theme.CardSurface
+import com.example.ui.components.GlassButton
+import com.example.ui.components.GlassCard
+import com.example.ui.theme.ConnectedStatus
 import com.example.ui.theme.DarkText
-import com.example.ui.theme.PrimaryBg
+import com.example.ui.theme.GlassBackground
+import com.example.ui.theme.GlassBackgroundBrush
+import com.example.ui.theme.GlassBorder
+import com.example.ui.theme.GlassBorderAccent
+import com.example.ui.theme.GlassBorderLight
+import com.example.ui.theme.GlassSurfaceCard
+import com.example.ui.theme.GlassSurfaceSubtle
 import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.PrimaryBlueLight
-import com.example.ui.theme.SecondaryBg
 import com.example.ui.theme.SecondaryText
 import com.example.ui.viewmodel.AppScreen
 import com.example.ui.viewmodel.RemoteViewModel
@@ -95,324 +100,301 @@ fun DeviceDiscoveryScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = PrimaryBg
+        containerColor = GlassBackground
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
+                .background(GlassBackgroundBrush)
                 .padding(innerPadding)
         ) {
-            // HEADER BAR
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(PrimaryBlueLight, RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Wifi,
-                            contentDescription = null,
-                            tint = PrimaryBlue,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Column {
-                        Text(
-                            text = "NASA REMOTE",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 1.2.sp,
-                                fontSize = 16.sp
-                            ),
-                            color = DarkText
-                        )
-                        Text(
-                            text = "WiFi Universal Remote",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = SecondaryText
-                        )
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = { showHelpDialog = true },
-                        modifier = Modifier.testTag("btn_help")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.HelpOutline,
-                            contentDescription = "Help & Troubleshooting",
-                            tint = SecondaryText
-                        )
-                    }
-                    IconButton(
-                        onClick = { viewModel.navigateTo(AppScreen.MORE_OPTIONS) },
-                        modifier = Modifier.testTag("btn_settings")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Options",
-                            tint = SecondaryText
-                        )
-                    }
-                }
-            }
-
-            // Scanning Progress indicator
-            if (isScanning) {
-                LinearProgressIndicator(
+            Column(modifier = Modifier.fillMaxSize()) {
+                // TOP BAR (Glassmorphism)
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    color = PrimaryBlue,
-                    trackColor = PrimaryBlueLight
-                )
-            } else {
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // DISCOVERY HERO CARD
-                item {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        color = SecondaryBg,
-                        border = BorderStroke(1.dp, BorderColor)
+                    color = GlassSurfaceSubtle,
+                    border = BorderStroke(1.dp, GlassBorderLight)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.padding(18.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(PrimaryBlueLight, CircleShape),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Discover Devices",
-                                        style = MaterialTheme.typography.titleLarge.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 20.sp
-                                        ),
-                                        color = DarkText
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Ensure your phone and Smart TV are connected to the same local WiFi network.",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                                        color = SecondaryText
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Button(
-                                    onClick = { viewModel.startScan() },
-                                    enabled = !isScanning,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = PrimaryBlue,
-                                        contentColor = Color.White
-                                    ),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(46.dp)
-                                        .testTag("btn_scan_refresh")
-                                ) {
-                                    if (isScanning) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(18.dp),
-                                            color = Color.White,
-                                            strokeWidth = 2.dp
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Scanning...", fontSize = 13.sp)
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Scan WiFi", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
-
-                                OutlinedButton(
-                                    onClick = { showManualDialog = true },
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(1.dp, PrimaryBlue),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryBlue),
-                                    modifier = Modifier
-                                        .height(46.dp)
-                                        .testTag("btn_add_manual")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Manual IP", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-
-                            scanStatusMessage?.let { status ->
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Text(
-                                    text = status,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                    color = if (isScanning) PrimaryBlue else SecondaryText
+                                Icon(
+                                    imageVector = Icons.Default.Wifi,
+                                    contentDescription = null,
+                                    tint = PrimaryBlue,
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
-                        }
-                    }
-                }
-
-                // DEVICES LIST SECTION
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Detected Smart TVs (${devices.size})",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            ),
-                            color = DarkText
-                        )
-                        if (isScanning) {
-                            Text(
-                                text = "Probing subnet & SSDP...",
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                color = PrimaryBlue
-                            )
-                        }
-                    }
-                }
-
-                if (devices.isEmpty()) {
-                    item {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            color = CardSurface,
-                            border = BorderStroke(1.dp, BorderColor)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(28.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(60.dp)
-                                        .background(SecondaryBg, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Tv,
-                                        contentDescription = null,
-                                        tint = SecondaryText,
-                                        modifier = Modifier.size(32.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(14.dp))
+                            Column {
                                 Text(
-                                    text = "No TV Devices Found",
+                                    text = "NASA REMOTE",
                                     style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 1.2.sp,
                                         fontSize = 16.sp
                                     ),
                                     color = DarkText
                                 )
-                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Make sure your TV is turned ON, connected to the same WiFi network, or use 'Manual IP' above.",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                    color = SecondaryText,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    text = "WiFi Universal Smart TV",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                    color = SecondaryText
                                 )
+                            }
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { showHelpDialog = true },
+                                modifier = Modifier.testTag("btn_help")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.HelpOutline,
+                                    contentDescription = "Help & Troubleshooting",
+                                    tint = SecondaryText
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.navigateTo(AppScreen.MORE_OPTIONS) },
+                                modifier = Modifier.testTag("btn_settings")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Options",
+                                    tint = SecondaryText
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Scanning Progress bar
+                AnimatedVisibility(visible = isScanning, enter = fadeIn(), exit = fadeOut()) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = PrimaryBlue,
+                        trackColor = PrimaryBlueLight
+                    )
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // HERO CARD
+                    item {
+                        GlassCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            shapeRadius = 24.dp,
+                            elevation = 3.dp,
+                            borderColor = GlassBorderLight
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "Discover Smart TVs",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 20.sp
+                                    ),
+                                    color = DarkText
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Connect both your Android device and TV to the same WiFi network.",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                                    color = SecondaryText
+                                )
+
                                 Spacer(modifier = Modifier.height(16.dp))
-                                OutlinedButton(
-                                    onClick = { showManualDialog = true },
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, BorderColor)
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Text("Connect via Direct IP", color = PrimaryBlue, fontSize = 12.sp)
+                                    GlassButton(
+                                        text = if (isScanning) "Scanning..." else "Scan WiFi",
+                                        onClick = { viewModel.startScan() },
+                                        icon = if (!isScanning) Icons.Default.Refresh else null,
+                                        isPrimary = true,
+                                        isLoading = isScanning,
+                                        modifier = Modifier.weight(1.2f),
+                                        testTag = "btn_scan_refresh"
+                                    )
+
+                                    OutlinedButton(
+                                        onClick = { showManualDialog = true },
+                                        shape = RoundedCornerShape(16.dp),
+                                        border = BorderStroke(1.dp, GlassBorderAccent),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryBlue),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(50.dp)
+                                            .testTag("btn_add_manual")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Manual IP", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                scanStatusMessage?.let { status ->
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text(
+                                        text = status,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                        color = if (isScanning) PrimaryBlue else SecondaryText
+                                    )
                                 }
                             }
                         }
                     }
-                } else {
-                    items(devices, key = { "${it.ipAddress}:${it.port}" }) { device ->
-                        DeviceCard(
-                            device = device,
-                            onConnect = { viewModel.selectDevice(device) }
-                        )
-                    }
-                }
 
-                // TROUBLESHOOTING CARD
-                item {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showHelpDialog = true },
-                        shape = RoundedCornerShape(14.dp),
-                        color = SecondaryBg,
-                        border = BorderStroke(1.dp, BorderColor)
-                    ) {
+                    // DETECTED DEVICES SECTION HEADER
+                    item {
                         Row(
-                            modifier = Modifier.padding(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = PrimaryBlue,
-                                modifier = Modifier.size(20.dp)
+                            Text(
+                                text = "Detected TVs (${devices.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                ),
+                                color = DarkText
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
+                            if (isScanning) {
                                 Text(
-                                    text = "Mi TV WiFi Connection Tips",
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    ),
-                                    color = DarkText
-                                )
-                                Text(
-                                    text = "Xiaomi TVs listen on port 6095. Tap here for quick setup steps.",
+                                    text = "Scanning mDNS & SSDP...",
                                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                    color = SecondaryText
+                                    color = PrimaryBlue
                                 )
+                            }
+                        }
+                    }
+
+                    // DEVICES LIST OR EMPTY PLACEHOLDER
+                    if (devices.isEmpty()) {
+                        item {
+                            GlassCard(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                shapeRadius = 20.dp,
+                                elevation = 2.dp,
+                                contentPadding = PaddingValues(28.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(60.dp)
+                                            .background(PrimaryBlueLight, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Tv,
+                                            contentDescription = null,
+                                            tint = PrimaryBlue,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    Text(
+                                        text = "No Smart TVs Found Yet",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp
+                                        ),
+                                        color = DarkText
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Ensure your TV is powered on, connected to WiFi, or connect directly using 'Manual IP'.",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        color = SecondaryText,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    OutlinedButton(
+                                        onClick = { showManualDialog = true },
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, GlassBorderAccent)
+                                    ) {
+                                        Text("Connect via Direct IP", color = PrimaryBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        items(devices, key = { "${it.ipAddress}:${it.port}" }) { device ->
+                            DeviceCard(
+                                device = device,
+                                onConnect = { viewModel.selectDevice(device) }
+                            )
+                        }
+                    }
+
+                    // HELPFUL PROTOCOL CARD
+                    item {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showHelpDialog = true },
+                            shape = RoundedCornerShape(16.dp),
+                            color = GlassSurfaceSubtle,
+                            border = BorderStroke(1.dp, GlassBorderLight)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = PrimaryBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Connection & Pairing Guide",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        ),
+                                        color = DarkText
+                                    )
+                                    Text(
+                                        text = "Android TV uses PIN pairing (port 6467). Xiaomi Mi TV uses HTTP (port 6095). Tap for tips.",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                        color = SecondaryText
+                                    )
+                                }
                             }
                         }
                     }
@@ -421,7 +403,7 @@ fun DeviceDiscoveryScreen(
         }
     }
 
-    // MANUAL IP DIALOG
+    // MANUAL IP DIALOG (Glassmorphic)
     if (showManualDialog) {
         ManualIpDialog(
             onDismiss = { showManualDialog = false },
@@ -445,9 +427,9 @@ private fun ManualIpDialog(
     onAdd: (ip: String, port: Int, name: String, protocol: RemoteProtocol) -> Unit
 ) {
     var ip by remember { mutableStateOf("192.168.1.") }
-    var portText by remember { mutableStateOf("6095") }
-    var name by remember { mutableStateOf("Living Room Mi TV") }
-    var selectedProtocol by remember { mutableStateOf(RemoteProtocol.MI_TV_HTTP) }
+    var portText by remember { mutableStateOf("6467") }
+    var name by remember { mutableStateOf("Living Room TV") }
+    var selectedProtocol by remember { mutableStateOf(RemoteProtocol.ANDROID_TV_REMOTE) }
     var expanded by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -470,7 +452,7 @@ private fun ManualIpDialog(
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PrimaryBlue,
-                        unfocusedBorderColor = BorderColor
+                        unfocusedBorderColor = GlassBorder
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -485,7 +467,7 @@ private fun ManualIpDialog(
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = PrimaryBlue,
-                            unfocusedBorderColor = BorderColor
+                            unfocusedBorderColor = GlassBorder
                         ),
                         modifier = Modifier
                             .weight(1f)
@@ -499,7 +481,7 @@ private fun ManualIpDialog(
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = PrimaryBlue,
-                            unfocusedBorderColor = BorderColor
+                            unfocusedBorderColor = GlassBorder
                         ),
                         modifier = Modifier
                             .weight(1.5f)
@@ -520,7 +502,7 @@ private fun ManualIpDialog(
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = PrimaryBlue,
-                            unfocusedBorderColor = BorderColor
+                            unfocusedBorderColor = GlassBorder
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -575,37 +557,37 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "1. Same Network:",
+                    text = "1. Android TV Remote (v2):",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
                     color = DarkText
                 )
                 Text(
-                    text = "Both your Android phone and your Smart TV must be connected to the exact same WiFi router (SSID).",
+                    text = "Android TV Remote uses a TLS PIN pairing handshake on ports 6466/6467. Tap 'Pair Device' and enter the 4 to 6 character code displayed on the TV.",
                     fontSize = 12.sp,
                     color = SecondaryText
                 )
 
                 Text(
-                    text = "2. AP / Client Isolation:",
+                    text = "2. Xiaomi Mi TV (PatchWall HTTP):",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
                     color = DarkText
                 )
                 Text(
-                    text = "Ensure your router's 'AP Isolation' or 'Guest WiFi' setting is disabled, so local devices can communicate.",
+                    text = "Xiaomi TVs listen on port 6095. Direct key commands work immediately without a PIN over local HTTP.",
                     fontSize = 12.sp,
                     color = SecondaryText
                 )
 
                 Text(
-                    text = "3. Xiaomi Mi TV (Port 6095):",
+                    text = "3. Same Local Network Required:",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
                     color = DarkText
                 )
                 Text(
-                    text = "Xiaomi TVs run the PatchWall HTTP remote service on port 6095. If auto-scan doesn't detect it, check your TV IP in Settings > About > Status > IP, and add via 'Manual IP'.",
+                    text = "Ensure both devices are on the exact same WiFi network. AP Isolation or Guest WiFi must be disabled on your router.",
                     fontSize = 12.sp,
                     color = SecondaryText
                 )

@@ -1,13 +1,19 @@
 package com.example
 
+import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.SavedDevicesRepository
+import com.example.model.DeviceConnectionState
 import com.example.model.DiscoveredDevice
 import com.example.model.RemoteProtocol
 import com.example.network.DeviceDiscoveryManager
+import com.example.ui.viewmodel.RemoteViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -52,13 +59,11 @@ class ExampleRobolectricTest {
         assertFalse(afterRemove.any { it.ipAddress == "192.168.1.55" })
     }
 
-    // Requirement 8: Duplicate discovery results do not corrupt device identity or protocol metadata
     @Test
     fun testDuplicateDiscoveryPreservesHighFidelityMetadata() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val discoveryManager = DeviceDiscoveryManager(context, CoroutineScope(Dispatchers.Unconfined))
 
-        // First: device discovered with specific name and protocol
         val initialDevice = DiscoveredDevice(
             id = "192.168.1.50_6466",
             name = "Living Room TV",
@@ -69,7 +74,6 @@ class ExampleRobolectricTest {
         )
         discoveryManager.addDevice(initialDevice)
 
-        // Second: duplicate/subsequent scan results with generic name and UNVERIFIED protocol
         val duplicateWeakDevice = DiscoveredDevice(
             id = "192.168.1.50_6466",
             name = "Smart TV (192.168.1.50)",
@@ -84,13 +88,11 @@ class ExampleRobolectricTest {
         assertEquals(1, devices.size)
         val merged = devices.first()
 
-        // Verify that high-fidelity name, manufacturer, and protocol are preserved
         assertEquals("Living Room TV", merged.name)
         assertEquals("Android TV", merged.manufacturer)
         assertEquals(RemoteProtocol.ANDROID_TV_REMOTE, merged.protocol)
     }
 
-    // Requirement 9: Existing manual device selection and saved-device behavior are preserved
     @Test
     fun testManualDeviceAdditionAndPersistence() {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -112,5 +114,64 @@ class ExampleRobolectricTest {
         repository.saveDevice(manual)
         val loaded = repository.savedDevices.value
         assertTrue(loaded.any { it.ipAddress == "192.168.1.120" && it.name == "Studio Mi TV" })
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun testViewModelAndroidTvPairingCycle() = runTest {
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = RemoteViewModel(application)
+
+        val atvDevice = DiscoveredDevice(
+            id = "192.168.1.200_6467",
+            name = "Sony Bravia Android TV",
+            manufacturer = "Sony (Android TV)",
+            ipAddress = "192.168.1.200",
+            port = 6467,
+            protocol = RemoteProtocol.ANDROID_TV_REMOTE
+        )
+
+        // Select Android TV device
+        viewModel.selectDevice(atvDevice)
+
+        var attempts = 0
+        while (viewModel.connectionState.value is DeviceConnectionState.Connecting && attempts < 50) {
+            advanceUntilIdle()
+            ShadowLooper.idleMainLooper()
+            Thread.sleep(20)
+            attempts++
+        }
+
+        // Should initially enter PairingRequired
+        assertTrue(viewModel.connectionState.value is DeviceConnectionState.PairingRequired)
+
+        // Trigger pairing dialog
+        viewModel.startPairing(atvDevice)
+        advanceUntilIdle()
+        ShadowLooper.idleMainLooper()
+        assertTrue(viewModel.isPairingDialogVisible.value)
+
+        // Submit invalid PIN
+        viewModel.submitPairingPin("12")
+        advanceUntilIdle()
+        ShadowLooper.idleMainLooper()
+        assertTrue(viewModel.isPairingDialogVisible.value)
+        assertTrue(viewModel.pairingErrorMessage.value != null)
+
+        // Submit valid PIN
+        viewModel.submitPairingPin("5821")
+        attempts = 0
+        while (viewModel.isPairingDialogVisible.value && attempts < 60) {
+            advanceUntilIdle()
+            ShadowLooper.idleMainLooper()
+            Thread.sleep(30)
+            attempts++
+        }
+
+        // Dialog should dismiss and state should become Connected
+        assertFalse(viewModel.isPairingDialogVisible.value)
+        assertTrue(viewModel.connectionState.value is DeviceConnectionState.Connected)
+        val connectedState = viewModel.connectionState.value as DeviceConnectionState.Connected
+        assertEquals("192.168.1.200", connectedState.device.ipAddress)
     }
 }

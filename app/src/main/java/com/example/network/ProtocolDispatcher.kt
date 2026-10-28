@@ -1,10 +1,13 @@
 package com.example.network
 
+import android.content.Context
 import com.example.model.CommandResult
 import com.example.model.DiscoveredDevice
+import com.example.model.PairingResult
 import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
+import com.example.network.adapter.AndroidTvRemoteAdapter
 import com.example.network.adapter.GenericTvAdapter
 import com.example.network.adapter.MiTvHttpAdapter
 import com.example.network.adapter.RokuEcpAdapter
@@ -15,23 +18,27 @@ import com.example.network.adapter.UpnpMediaAdapter
  * Central protocol registry and dispatcher.
  *
  * Enforces strict protocol separation:
- * - Each device is routed only to its verified protocol adapter.
+ * - Android TV Remote v2 is handled via AndroidTvRemoteAdapter with secure PIN pairing.
+ * - Xiaomi Mi TV is handled via MiTvHttpAdapter (ports 6095/6097).
+ * - Roku / TCL is handled via RokuEcpAdapter (port 8060).
+ * - Google Cast is identified as media streaming, not a remote key protocol.
  * - Unknown or unverified protocols never silently fall back to an unrelated adapter.
- * - Google Cast, Android TV Remote, Xiaomi HTTP, Roku ECP, and UPnP are distinct and never interchangeable.
  */
 class ProtocolDispatcher(
-    private val miTvAdapter: MiTvHttpAdapter = MiTvHttpAdapter(),
-    private val rokuAdapter: RokuEcpAdapter = RokuEcpAdapter(),
-    private val upnpAdapter: UpnpMediaAdapter = UpnpMediaAdapter(),
-    private val genericAdapter: GenericTvAdapter = GenericTvAdapter()
+    context: Context? = null,
+    val miTvAdapter: MiTvHttpAdapter = MiTvHttpAdapter(),
+    val rokuAdapter: RokuEcpAdapter = RokuEcpAdapter(),
+    val androidTvAdapter: AndroidTvRemoteAdapter = AndroidTvRemoteAdapter(context),
+    val upnpAdapter: UpnpMediaAdapter = UpnpMediaAdapter(),
+    val genericAdapter: GenericTvAdapter = GenericTvAdapter()
 ) {
     fun getAdapter(protocol: RemoteProtocol): TvProtocolAdapter? {
         return when (protocol) {
             RemoteProtocol.MI_TV_HTTP -> miTvAdapter
             RemoteProtocol.ROKU_ECP -> rokuAdapter
+            RemoteProtocol.ANDROID_TV_REMOTE -> androidTvAdapter
             RemoteProtocol.UPNP_MEDIA -> upnpAdapter
             RemoteProtocol.GENERIC_HTTP -> genericAdapter
-            RemoteProtocol.ANDROID_TV_REMOTE,
             RemoteProtocol.GOOGLE_CAST,
             RemoteProtocol.UNVERIFIED -> null
         }
@@ -40,13 +47,11 @@ class ProtocolDispatcher(
     suspend fun verifyDevice(device: DiscoveredDevice): ProtocolVerificationResult {
         return when (device.protocol) {
             RemoteProtocol.ANDROID_TV_REMOTE -> {
-                ProtocolVerificationResult.PairingRequired(
-                    "Android TV Remote v2 detected on port ${device.port}. Pairing via TLS key exchange is required before commands can be sent."
-                )
+                androidTvAdapter.verifyConnection(device.ipAddress, device.port)
             }
             RemoteProtocol.GOOGLE_CAST -> {
                 ProtocolVerificationResult.ProtocolUnverified(
-                    "Google Cast service on port ${device.port} is for media streaming, not remote control keyevents."
+                    "Google Cast service on port ${device.port} is for media streaming, not TV remote navigation keys."
                 )
             }
             RemoteProtocol.UNVERIFIED -> {
@@ -65,6 +70,22 @@ class ProtocolDispatcher(
         }
     }
 
+    suspend fun startPairing(device: DiscoveredDevice): PairingResult {
+        return if (device.protocol == RemoteProtocol.ANDROID_TV_REMOTE) {
+            androidTvAdapter.startPairing(device.ipAddress, device.port)
+        } else {
+            PairingResult.Failed("Pairing is not required or unsupported for ${device.protocol.displayName}.")
+        }
+    }
+
+    suspend fun submitPairingPin(device: DiscoveredDevice, pin: String): PairingResult {
+        return if (device.protocol == RemoteProtocol.ANDROID_TV_REMOTE) {
+            androidTvAdapter.submitPairingPin(device.ipAddress, device.port, pin)
+        } else {
+            PairingResult.Failed("Pairing is not supported for ${device.protocol.displayName}.")
+        }
+    }
+
     suspend fun ping(device: DiscoveredDevice): Boolean {
         return verifyDevice(device) is ProtocolVerificationResult.Verified
     }
@@ -72,9 +93,6 @@ class ProtocolDispatcher(
     suspend fun sendCommand(device: DiscoveredDevice, command: RemoteCommand): CommandResult {
         val adapter = getAdapter(device.protocol)
             ?: return when (device.protocol) {
-                RemoteProtocol.ANDROID_TV_REMOTE -> CommandResult.Unsupported(
-                    "Android TV Remote v2 requires TLS pairing before remote commands can be sent."
-                )
                 RemoteProtocol.GOOGLE_CAST -> CommandResult.Unsupported(
                     "Google Cast does not support TV keyevents."
                 )
@@ -116,11 +134,15 @@ class ProtocolDispatcher(
         if (rokuAdapter.ping(ip, 8060)) {
             return RemoteProtocol.ROKU_ECP to 8060
         }
-        // 3. Try UPnP on 8080
+        // 3. Try Android TV Remote on 6467
+        if (androidTvAdapter.ping(ip, 6467)) {
+            return RemoteProtocol.ANDROID_TV_REMOTE to 6467
+        }
+        // 4. Try UPnP on 8080
         if (upnpAdapter.ping(ip, 8080)) {
             return RemoteProtocol.UPNP_MEDIA to 8080
         }
-        // 4. Try Generic on 80
+        // 5. Try Generic on 80
         if (genericAdapter.ping(ip, 80)) {
             return RemoteProtocol.GENERIC_HTTP to 80
         }

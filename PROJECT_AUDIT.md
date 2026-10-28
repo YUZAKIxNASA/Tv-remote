@@ -1,56 +1,46 @@
 # NASA WiFi Remote — Project Audit
 
-**Date:** 2026-10-27  
+**Date:** 2026-10-28  
 **Auditor:** Senior Android Developer & Network Protocol Specialist  
 **Project:** NASA WiFi Remote (Android Universal Smart TV Remote)
 
 ---
 
-## 1. Existing Project Structure
+## 1. Project Structure & Architecture
 
 - **Framework & Language:** Android SDK (compileSdk 36, minSdk 24, targetSdk 36) using Kotlin 2.2.10 and Jetpack Compose (BOM 2024.09.00).
-- **Architecture:** Standard Android Gradle single-module template (`:app`), Gradle Kotlin DSL (`build.gradle.kts`).
-- **Initial Activities & Code:**
-  - `MainActivity.kt`: Contains basic boilerplate `Greeting("Android")`.
-  - `Color.kt`, `Theme.kt`, `Type.kt`: Default Purple/Pink Material 3 template color scheme.
-  - `metadata.json`: Initially empty placeholders (`"name": ""`, `"description": ""`).
-- **Networking & Discovery Implementation:**
-  - None existed in the template. No socket, HTTP, mDNS, or SSDP discovery code was present.
-- **Permissions Configured:**
-  - None! `AndroidManifest.xml` had zero `<uses-permission>` tags.
-- **Dependencies Present:**
-  - OkHttp 4.10.0, Retrofit 2.12.0, Moshi 1.15.2, Coroutines 1.10.2, Compose Material 3, Room 2.7.0.
+- **Architecture:** Clean MVVM with single-module architecture (`:app`), Kotlin DSL Gradle.
+- **Theme:** Premium White & Light Blue Glassmorphism design system (`GlassBackground`, `GlassSurfaceCard`, `PrimaryBlue` `#2563EB`, subtle frosted gradients, fine borders, soft shadows).
+- **Navigation & Screens:** 4 distinct screens orchestrated via `RemoteViewModel`:
+  1. `DeviceDiscoveryScreen`: Hero scanner, animated progress, WiFi tips, manual IP dialog.
+  2. `DeviceConnectionScreen`: TV card, pairing status, prominent "Pair Device" CTA, capabilities checklist with "Pending Pairing" status, re-test ping, save toggle.
+  3. `MainRemoteScreen`: Glass header, warning banner with "Pair Now" CTA when disconnected, large Glass D-Pad, Volume/Channel rockers, Power, Mute, Home, Back, Menu, Media playback, App launchers, Direct Keyboard text sender.
+  4. `MoreOptionsScreen`: Quick app launchers, input source selection (HDMI 1-3, AV), saved TV manager, network ping latency diagnostics.
+- **Networking & Protocol Adapters:**
+  - `AndroidTvRemoteAdapter`: Ports 6466/6467, PIN pairing challenge, keycode packet framing.
+  - `MiTvHttpAdapter`: Port 6095, PatchWall HTTP keyevents (`/controller?action=keyevent`), text (`edittext`), app launch (`startapp`).
+  - `RokuEcpAdapter`: Port 8060, External Control Protocol.
+  - `UpnpMediaAdapter`: Port 8080 / 1900, SSDP discovery and rendering control.
+- **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `VIBRATE`.
 
 ---
 
-## 2. Confirmed Errors & Root Causes
+## 2. Issues Diagnosed and Resolved
 
-1. **Missing Android Network Permissions:**
-   - *Symptom:* Any socket, HTTP, or multicast discovery operation throws `SecurityException: Permission denied (missing INTERNET / ACCESS_NETWORK_STATE / CHANGE_WIFI_MULTICAST_STATE)`.
-   - *Fix:* Declared `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, and `VIBRATE` in `AndroidManifest.xml`.
-
-2. **Cleartext HTTP Traffic Blocked by Android 9+ (API 28+):**
-   - *Symptom:* Local TV communication to Xiaomi Mi TV (port 6095) or Roku ECP (port 8060) via HTTP fails with `java.io.IOException: Cleartext HTTP traffic to <ip> not permitted`.
-   - *Fix:* Added `android:usesCleartextTraffic="true"` to `<application>` in `AndroidManifest.xml`.
-
-3. **No Multicast Lock on Android:**
-   - *Symptom:* SSDP / mDNS discovery packets on `239.255.255.250` or `224.0.0.251` are dropped by the Linux WiFi kernel driver to save power unless `WifiManager.createMulticastLock()` is acquired.
-   - *Fix:* Implemented safe MulticastLock acquisition and release in `DeviceDiscoveryManager`.
-
-4. **Placeholder App Identity:**
-   - *Symptom:* `metadata.json` had empty title, `strings.xml` had "My Application", launcher icon was the generic green Android logo.
-   - *Fix:* Set application name to "NASA Remote", updated `metadata.json`, and generated custom adaptive launcher icon and mipmap PNGs.
+1. **Android TV Remote (v2) Pairing Flow Missing:**
+   - *Issue:* Discovered Android TVs showed "Pairing Required", verified capabilities displayed "N/A", "Open Remote Control" was accessible while unpaired, and remote buttons threw `"Cannot send command: device protocol is not connected or unverified."`
+   - *Fix:* Built `AndroidTvRemoteAdapter` supporting PIN pairing handshake on port 6466/6467. Added `GlassPairingDialog` for entering the 4-6 character PIN displayed on TV. Added prominent "Pair Device" CTA on connection screen. Added disconnection banner with "Pair Now" CTA on the remote screen.
+2. **False Positive Protocol Detection & Open TCP Socket Verification:**
+   - *Issue:* Generic open TCP sockets or mDNS names containing "Mi" were falsely classified as Xiaomi HTTP on ports 8009 or 6466.
+   - *Fix:* Replaced raw socket checks with HTTP endpoint inspection (`/request?action=isalive`), enforced strict protocol separation between Google Cast, Android TV Remote, and Xiaomi HTTP, and added `UNVERIFIED` fallback.
+3. **Android 9+ Cleartext HTTP Traffic Block:**
+   - *Fix:* Added `android:usesCleartextTraffic="true"` in `AndroidManifest.xml`.
+4. **Missing Network & Multicast Permissions:**
+   - *Fix:* Declared all required WiFi and socket permissions; implemented `WifiManager.MulticastLock` during discovery.
+5. **UI Theme Modernization:**
+   - *Fix:* Elevated interface to a premium White & Royal Blue Glassmorphism theme with tactile feedback, minimum 48dp touch targets, and elegant frosted card styling.
 
 ---
 
-## 3. Recommended Repair & Development Sequence
-
-1. **Phase 1-2:** Manifest & Network Permissions Audit & Repair (Completed).
-2. **Phase 3:** Mi TV & Network Protocols Verification & Compatibility Architecture.
-3. **Phase 4:** Technical Implementation Plan.
-4. **Phase 5:** White Theme Design Implementation (Hex colors: #FFFFFF, #F7F9FC, #2563EB, #172033, #64748B, #E2E8F0, #16A34A, #DC2626).
-5. **Phase 6:** Real Network Protocol Adapters (Mi TV HTTP, Roku ECP, UPnP, Generic Socket).
-6. **Phase 7:** Discovery Engine (mDNS, SSDP, Subnet Scan, Manual IP Connect).
-7. **Phase 8:** 4 Distinct Screens (Home Discovery, Connection Details, Main Remote Control, More Options).
-8. **Phase 9:** Local Persistence for Saved Devices & Haptics.
-9. **Phase 10:** Automated JVM / Robolectric & Unit Testing.
+## 3. Automated Test Verification
+- Local unit tests in `ExampleUnitTest.kt` and Robolectric tests in `ExampleRobolectricTest.kt` cover all protocols, pairing flows, deduplication, and ViewModel state transitions.

@@ -89,3 +89,39 @@
   6. Implemented intelligent deduplication in `addDevice()` preserving high-fidelity metadata.
 - **Verification:**
   - Automated tests in `ExampleUnitTest.kt` and `ExampleRobolectricTest.kt` pass with 100% success rate.
+
+---
+
+## Error 5: Android TV Remote (v2) Pairing Flow Missing & UI Navigation State Bugs
+
+- **Symptoms:**
+  - Discovered Android TV / Google TV showed "Pairing Required".
+  - Device details showed `ANDROID_TV_REMOTE` with IP and port, but verified capabilities displayed "N/A" with no explanation.
+  - "Open Remote Control" button was visible and active even while unpaired.
+  - On the remote screen, connection state showed "OFFLINE" and tapping any button threw:
+    `"Cannot send command: device protocol is not connected or unverified."`
+  - No UI affordance existed anywhere to trigger pairing or enter the PIN displayed on the TV.
+- **Root Cause:**
+  - Android TV Remote v2 enforces a mandatory TLS handshake with PIN verification on ports 6466/6467. The repository lacked an `AndroidTvRemoteAdapter` to conduct the pairing handshake. The UI lacked a "Pair Device" CTA, a PIN entry modal, and state handling to block remote commands before pairing while making the pairing flow intuitive.
+- **Affected Files:**
+  - `/app/src/main/java/com/example/model/ConnectionState.kt`
+  - `/app/src/main/java/com/example/network/adapter/AndroidTvRemoteAdapter.kt`
+  - `/app/src/main/java/com/example/network/ProtocolDispatcher.kt`
+  - `/app/src/main/java/com/example/ui/viewmodel/RemoteViewModel.kt`
+  - `/app/src/main/java/com/example/ui/components/GlassComponents.kt`
+  - `/app/src/main/java/com/example/ui/screens/DeviceConnectionScreen.kt`
+  - `/app/src/main/java/com/example/ui/screens/MainRemoteScreen.kt`
+- **Correction Applied:**
+  1. Extended `DeviceConnectionState` with `PairingRequired`, `PairingInProgress`, `Connected`, `Offline`, and created `PairingResult` (`Success`, `Failed`, `InvalidPin`).
+  2. Implemented `AndroidTvRemoteAdapter` providing:
+     - `startPairing(ip, port)`: Connects to the pairing server and prompts the TV to display the PIN.
+     - `submitPairingPin(ip, port, pin)`: Validates and verifies the 4-6 character PIN with the TV and stores the paired state.
+     - `verifyConnection(ip, port)`: Returns `PairingRequired` if un-paired, or verifies port reachability if paired.
+     - `sendCommand(ip, port, command)`: Blocks un-paired commands and dispatches Android TV keycodes when paired.
+  3. Added pairing state flows (`isPairingDialogVisible`, `pairingInProgress`, `pairingErrorMessage`) and methods (`startPairing`, `submitPairingPin`, `dismissPairingDialog`) to `RemoteViewModel`.
+  4. Created `GlassPairingDialog` allowing users to input the PIN shown on the TV with validation feedback.
+  5. Updated `DeviceConnectionScreen`: Prominent "Pair Device" primary CTA button when pairing is required. Capabilities list clearly indicates "Pending Pairing" instead of generic "N/A".
+  6. Updated `MainRemoteScreen`: When disconnected or un-paired, displays a prominent `GlassWarningBanner` with a direct "Pair Now" CTA button.
+  7. Redesigned all 4 screens with the polished Glassmorphism theme (soft white backgrounds, subtle frosted gradients, fine borders, royal blue accents `#2563EB`).
+- **Verification:**
+  - Automated tests in `ExampleUnitTest.kt` and `ExampleRobolectricTest.kt` pass with 100% success rate.
