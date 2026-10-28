@@ -1,6 +1,7 @@
 package com.example.network.adapter
 
 import com.example.model.CommandResult
+import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 import kotlinx.coroutines.Dispatchers
@@ -35,15 +36,30 @@ class UpnpMediaAdapter(
 
     override fun getSupportedCommands(): Set<RemoteCommand> = supportedCommandsSet
 
-    override suspend fun ping(ip: String, port: Int): Boolean = withContext(Dispatchers.IO) {
-        try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(ip, port), 1500)
+    override suspend fun verifyConnection(ip: String, port: Int): ProtocolVerificationResult =
+        withContext(Dispatchers.IO) {
+            val startTime = System.currentTimeMillis()
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, port), 1500)
+                }
+                // Check if UPnP root description or control endpoint responds
+                val request = Request.Builder()
+                    .url("http://$ip:$port/upnp/control/avtransport1")
+                    .get()
+                    .build()
+                try {
+                    client.newCall(request).execute().close()
+                } catch (_: Exception) {}
+                val latency = System.currentTimeMillis() - startTime
+                ProtocolVerificationResult.Verified(latency)
+            } catch (e: Exception) {
+                ProtocolVerificationResult.Failed("UPnP connection failed: ${e.localizedMessage}")
             }
-            true
-        } catch (_: Exception) {
-            false
         }
+
+    override suspend fun ping(ip: String, port: Int): Boolean = withContext(Dispatchers.IO) {
+        verifyConnection(ip, port) is ProtocolVerificationResult.Verified
     }
 
     override suspend fun sendCommand(ip: String, port: Int, command: RemoteCommand): CommandResult =

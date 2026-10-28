@@ -35,7 +35,7 @@ class SavedDevicesRepository(context: Context) {
                 val protocol = try {
                     RemoteProtocol.valueOf(protocolName)
                 } catch (_: Exception) {
-                    RemoteProtocol.MI_TV_HTTP
+                    RemoteProtocol.UNVERIFIED
                 }
                 list.add(
                     DiscoveredDevice(

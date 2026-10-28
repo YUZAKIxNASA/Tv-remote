@@ -63,6 +63,8 @@ import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.PrimaryBlueLight
 import com.example.ui.theme.SecondaryBg
 import com.example.ui.theme.SecondaryText
+import com.example.ui.theme.WarningStatus
+import com.example.ui.theme.WarningStatusBg
 import com.example.ui.viewmodel.AppScreen
 import com.example.ui.viewmodel.RemoteViewModel
 
@@ -227,6 +229,15 @@ fun DeviceConnectionScreen(
                                         Text("Verifying...", fontSize = 12.sp, color = PrimaryBlue)
                                     }
                                 }
+                                is DeviceConnectionState.ProtocolUnverified -> {
+                                    StatusPill(isConnected = false, label = "Protocol Unverified")
+                                }
+                                is DeviceConnectionState.PairingRequired -> {
+                                    StatusPill(isConnected = false, label = "Pairing Required")
+                                }
+                                is DeviceConnectionState.Discovered -> {
+                                    StatusPill(isConnected = false, label = "Discovered")
+                                }
                                 is DeviceConnectionState.ConnectionFailed -> {
                                     StatusPill(isConnected = false, label = "Connection Failed")
                                 }
@@ -239,32 +250,86 @@ fun DeviceConnectionScreen(
                             }
                         }
 
-                        if (connectionState is DeviceConnectionState.ConnectionFailed) {
-                            val failure = connectionState as DeviceConnectionState.ConnectionFailed
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = ErrorStatusBg,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                        when (val state = connectionState) {
+                            is DeviceConnectionState.ConnectionFailed -> {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = ErrorStatusBg,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Error,
-                                        contentDescription = null,
-                                        tint = ErrorStatus,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = failure.reason,
-                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                        color = ErrorStatus
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Error,
+                                            contentDescription = null,
+                                            tint = ErrorStatus,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = state.reason,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                            color = ErrorStatus
+                                        )
+                                    }
                                 }
                             }
+                            is DeviceConnectionState.ProtocolUnverified -> {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = WarningStatusBg,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Error,
+                                            contentDescription = null,
+                                            tint = WarningStatus,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = state.reason,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                            color = DarkText
+                                        )
+                                    }
+                                }
+                            }
+                            is DeviceConnectionState.PairingRequired -> {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = WarningStatusBg,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Error,
+                                            contentDescription = null,
+                                            tint = WarningStatus,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = state.instructions,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                            color = DarkText
+                                        )
+                                    }
+                                }
+                            }
+                            else -> {}
                         }
                     }
                 }

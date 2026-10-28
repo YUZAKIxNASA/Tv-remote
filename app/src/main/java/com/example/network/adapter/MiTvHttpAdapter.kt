@@ -1,6 +1,7 @@
 package com.example.network.adapter
 
 import com.example.model.CommandResult
+import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 import kotlinx.coroutines.Dispatchers
@@ -8,13 +9,18 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
- * Verified protocol adapter for Xiaomi Smart TV / PatchWall / Mi Box HTTP API (Port 6095).
+ * Protocol adapter for Xiaomi Smart TV / PatchWall / Mi Box HTTP API (Port 6095 / 6097).
+ *
+ * NOTE: Does NOT send Xiaomi HTTP requests to Google Cast (port 8009) or
+ * Android TV Remote v2 (port 6466/6467).
  */
 class MiTvHttpAdapter(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -47,31 +53,92 @@ class MiTvHttpAdapter(
 
     override fun getSupportedCommands(): Set<RemoteCommand> = supportedCommandsSet
 
-    override suspend fun ping(ip: String, port: Int): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // First check TCP socket reachability on target port
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(ip, port), 1500)
+    /**
+     * Verifies that the endpoint at ip:port is a true Xiaomi HTTP controller,
+     * not merely an open generic TCP port.
+     */
+    override suspend fun verifyConnection(ip: String, port: Int): ProtocolVerificationResult =
+        withContext(Dispatchers.IO) {
+            // Reject known non-Xiaomi HTTP ports (e.g. Google Cast 8009, Android TV Remote 6466/6467)
+            if (isKnownIncompatiblePort(port)) {
+                return@withContext ProtocolVerificationResult.ProtocolUnverified(
+                    "Port $port is used for other services (Google Cast/Android TV Remote v2), not Xiaomi HTTP PatchWall."
+                )
             }
-            true
-        } catch (_: Exception) {
-            // Try HTTP isalive fallback
+
+            // Step 1: Check basic socket reachability with quick timeout
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, port), 1500)
+                }
+            } catch (e: ConnectException) {
+                return@withContext ProtocolVerificationResult.Failed(
+                    "Connection refused at $ip:$port. Mi TV remote service is not running on this port."
+                )
+            } catch (e: SocketTimeoutException) {
+                return@withContext ProtocolVerificationResult.Failed(
+                    "Connection timed out at $ip:$port. Check that the TV is powered ON and on the same WiFi network."
+                )
+            } catch (e: Exception) {
+                return@withContext ProtocolVerificationResult.Failed(
+                    "Network error at $ip:$port: ${e.localizedMessage ?: "Unable to connect"}"
+                )
+            }
+
+            // Step 2: Protocol-level check. A bare socket connection is NOT proof of the Mi TV HTTP API.
+            val startTime = System.currentTimeMillis()
             try {
                 val request = Request.Builder()
                     .url("http://$ip:$port/request?action=isalive")
                     .get()
                     .build()
+
                 client.newCall(request).execute().use { response ->
-                    response.isSuccessful
+                    val latency = System.currentTimeMillis() - startTime
+                    when {
+                        response.isSuccessful -> {
+                            ProtocolVerificationResult.Verified(latency)
+                        }
+                        response.code in 401..403 -> {
+                            ProtocolVerificationResult.PairingRequired(
+                                "Mi TV at $ip:$port requires authorization/pairing (HTTP ${response.code})."
+                            )
+                        }
+                        response.code == 404 -> {
+                            ProtocolVerificationResult.ProtocolUnverified(
+                                "Device at $ip:$port responded with HTTP 404. It does not implement the Xiaomi HTTP remote protocol."
+                            )
+                        }
+                        else -> {
+                            ProtocolVerificationResult.ProtocolUnverified(
+                                "Device at $ip:$port returned unexpected HTTP status ${response.code}."
+                            )
+                        }
+                    }
                 }
-            } catch (_: Exception) {
-                false
+            } catch (e: SocketTimeoutException) {
+                ProtocolVerificationResult.Failed("HTTP alive probe timed out at $ip:$port")
+            } catch (e: ConnectException) {
+                ProtocolVerificationResult.Failed("HTTP connection refused at $ip:$port")
+            } catch (e: IOException) {
+                ProtocolVerificationResult.Failed("HTTP verification failed: ${e.localizedMessage}")
+            } catch (e: Exception) {
+                ProtocolVerificationResult.Failed("Verification error: ${e.localizedMessage}")
             }
         }
+
+    override suspend fun ping(ip: String, port: Int): Boolean {
+        return verifyConnection(ip, port) is ProtocolVerificationResult.Verified
     }
 
     override suspend fun sendCommand(ip: String, port: Int, command: RemoteCommand): CommandResult =
         withContext(Dispatchers.IO) {
+            if (isKnownIncompatiblePort(port)) {
+                return@withContext CommandResult.Unsupported(
+                    "Port $port is incompatible with Xiaomi HTTP remote control."
+                )
+            }
+
             val keycode = when (command) {
                 RemoteCommand.POWER -> "power"
                 RemoteCommand.UP -> "up"
@@ -104,10 +171,16 @@ class MiTvHttpAdapter(
                     val latency = System.currentTimeMillis() - startTime
                     if (response.isSuccessful) {
                         CommandResult.Success("Sent '${command.label}' to Mi TV", latency)
+                    } else if (response.code in 401..403) {
+                        CommandResult.Error("Mi TV authorization required (HTTP ${response.code})")
                     } else {
                         CommandResult.Error("Mi TV returned HTTP ${response.code} for key '$keycode'")
                     }
                 }
+            } catch (e: SocketTimeoutException) {
+                CommandResult.Error("Command timed out sending to $ip:$port")
+            } catch (e: ConnectException) {
+                CommandResult.Error("Connection refused by TV at $ip:$port")
             } catch (e: IOException) {
                 CommandResult.Error("Cannot reach Mi TV at $ip:$port (${e.localizedMessage ?: "Connection failed"})")
             } catch (e: Exception) {
@@ -155,4 +228,11 @@ class MiTvHttpAdapter(
                 CommandResult.Error("App launch error: ${e.localizedMessage}")
             }
         }
+
+    private fun isKnownIncompatiblePort(port: Int): Boolean {
+        // 8009: Google Cast TLS/Protobuf
+        // 6466, 6467: Android TV Remote v2 TLS
+        // 8060: Roku ECP
+        return port == 8009 || port == 6466 || port == 6467 || port == 8060
+    }
 }

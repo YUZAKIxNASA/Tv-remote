@@ -1,6 +1,7 @@
 package com.example.network.adapter
 
 import com.example.model.CommandResult
+import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 import kotlinx.coroutines.Dispatchers
@@ -27,15 +28,22 @@ class GenericTvAdapter(
 
     override fun getSupportedCommands(): Set<RemoteCommand> = RemoteCommand.entries.toSet()
 
-    override suspend fun ping(ip: String, port: Int): Boolean = withContext(Dispatchers.IO) {
-        try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(ip, port), 1500)
+    override suspend fun verifyConnection(ip: String, port: Int): ProtocolVerificationResult =
+        withContext(Dispatchers.IO) {
+            val startTime = System.currentTimeMillis()
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, port), 1500)
+                }
+                val latency = System.currentTimeMillis() - startTime
+                ProtocolVerificationResult.Verified(latency)
+            } catch (e: Exception) {
+                ProtocolVerificationResult.Failed("Generic network TV unreachable: ${e.localizedMessage}")
             }
-            true
-        } catch (_: Exception) {
-            false
         }
+
+    override suspend fun ping(ip: String, port: Int): Boolean = withContext(Dispatchers.IO) {
+        verifyConnection(ip, port) is ProtocolVerificationResult.Verified
     }
 
     override suspend fun sendCommand(ip: String, port: Int, command: RemoteCommand): CommandResult =

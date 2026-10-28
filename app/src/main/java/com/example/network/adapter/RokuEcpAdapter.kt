@@ -1,6 +1,7 @@
 package com.example.network.adapter
 
 import com.example.model.CommandResult
+import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 import kotlinx.coroutines.Dispatchers
@@ -10,8 +11,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -49,25 +52,51 @@ class RokuEcpAdapter(
 
     override fun getSupportedCommands(): Set<RemoteCommand> = supportedCommandsSet
 
-    override suspend fun ping(ip: String, port: Int): Boolean = withContext(Dispatchers.IO) {
-        try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(ip, port), 1500)
+    override suspend fun verifyConnection(ip: String, port: Int): ProtocolVerificationResult =
+        withContext(Dispatchers.IO) {
+            // Check basic socket reachability
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, port), 1500)
+                }
+            } catch (e: ConnectException) {
+                return@withContext ProtocolVerificationResult.Failed("Connection refused at $ip:$port")
+            } catch (e: SocketTimeoutException) {
+                return@withContext ProtocolVerificationResult.Failed("Connection timed out at $ip:$port")
+            } catch (e: Exception) {
+                return@withContext ProtocolVerificationResult.Failed("Network error at $ip:$port: ${e.localizedMessage}")
             }
-            true
-        } catch (_: Exception) {
+
+            // Real Roku ECP verification: query/device-info must return Roku XML
+            val startTime = System.currentTimeMillis()
             try {
                 val request = Request.Builder()
                     .url("http://$ip:$port/query/device-info")
                     .get()
                     .build()
+
                 client.newCall(request).execute().use { response ->
-                    response.isSuccessful
+                    val latency = System.currentTimeMillis() - startTime
+                    val body = response.body?.string() ?: ""
+                    if (response.isSuccessful && body.contains("<device-info", ignoreCase = true)) {
+                        ProtocolVerificationResult.Verified(latency)
+                    } else if (response.isSuccessful) {
+                        ProtocolVerificationResult.ProtocolUnverified(
+                            "Device at $ip:$port responded to HTTP but does not return Roku device-info XML."
+                        )
+                    } else {
+                        ProtocolVerificationResult.ProtocolUnverified(
+                            "Device at $ip:$port returned HTTP ${response.code} on Roku query/device-info."
+                        )
+                    }
                 }
-            } catch (_: Exception) {
-                false
+            } catch (e: Exception) {
+                ProtocolVerificationResult.Failed("Roku ECP verification failed: ${e.localizedMessage}")
             }
         }
+
+    override suspend fun ping(ip: String, port: Int): Boolean {
+        return verifyConnection(ip, port) is ProtocolVerificationResult.Verified
     }
 
     override suspend fun sendCommand(ip: String, port: Int, command: RemoteCommand): CommandResult =
@@ -87,8 +116,8 @@ class RokuEcpAdapter(
                 RemoteCommand.PLAY_PAUSE -> "Play"
                 RemoteCommand.PREVIOUS -> "Rev"
                 RemoteCommand.NEXT -> "Fwd"
-                RemoteCommand.APP_YOUTUBE -> return@withContext launchApp(ip, port, "837") // Roku YouTube App ID
-                RemoteCommand.APP_NETFLIX -> return@withContext launchApp(ip, port, "12")  // Roku Netflix App ID
+                RemoteCommand.APP_YOUTUBE -> return@withContext launchApp(ip, port, "837")
+                RemoteCommand.APP_NETFLIX -> return@withContext launchApp(ip, port, "12")
                 else -> return@withContext CommandResult.Unsupported("Command '${command.label}' is not supported on Roku ECP.")
             }
 

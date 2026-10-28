@@ -7,6 +7,7 @@ import com.example.data.SavedDevicesRepository
 import com.example.model.CommandResult
 import com.example.model.DeviceConnectionState
 import com.example.model.DiscoveredDevice
+import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 import com.example.network.DeviceDiscoveryManager
@@ -115,19 +116,21 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         _connectionState.value = DeviceConnectionState.Connecting(device)
 
         viewModelScope.launch {
-            val startTime = System.currentTimeMillis()
-            val reachable = protocolDispatcher.ping(device)
-            val latency = System.currentTimeMillis() - startTime
-
-            if (reachable) {
-                _connectionState.value = DeviceConnectionState.Connected(device, latency)
-                // Automatically save verified device
-                savedRepository.saveDevice(device)
-            } else {
-                _connectionState.value = DeviceConnectionState.ConnectionFailed(
-                    device,
-                    "Device at ${device.addressLabel} did not respond. Verify TV is powered ON and connected to the same WiFi network."
-                )
+            when (val result = protocolDispatcher.verifyDevice(device)) {
+                is ProtocolVerificationResult.Verified -> {
+                    _connectionState.value = DeviceConnectionState.Connected(device, result.latencyMs)
+                    // Automatically save verified device
+                    savedRepository.saveDevice(device)
+                }
+                is ProtocolVerificationResult.ProtocolUnverified -> {
+                    _connectionState.value = DeviceConnectionState.ProtocolUnverified(device, result.reason)
+                }
+                is ProtocolVerificationResult.PairingRequired -> {
+                    _connectionState.value = DeviceConnectionState.PairingRequired(device, result.instructions)
+                }
+                is ProtocolVerificationResult.Failed -> {
+                    _connectionState.value = DeviceConnectionState.ConnectionFailed(device, result.reason)
+                }
             }
         }
     }
@@ -142,20 +145,26 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        if (_connectionState.value !is DeviceConnectionState.Connected) {
+            _lastCommandResult.value = CommandResult.Error("Cannot send command: device protocol is not connected or unverified.")
+            return
+        }
+
         viewModelScope.launch {
             val result = protocolDispatcher.sendCommand(device, command)
             _lastCommandResult.value = result
-            // If connection failed due to host unreachable, update connection state
             if (result is CommandResult.Error && result.message.contains("Cannot reach", ignoreCase = true)) {
                 _connectionState.value = DeviceConnectionState.ConnectionFailed(device, result.message)
-            } else if (result is CommandResult.Success && _connectionState.value !is DeviceConnectionState.Connected) {
-                _connectionState.value = DeviceConnectionState.Connected(device, result.latencyMs)
             }
         }
     }
 
     fun sendText(text: String) {
         val device = _activeDevice.value ?: return
+        if (_connectionState.value !is DeviceConnectionState.Connected) {
+            _lastCommandResult.value = CommandResult.Error("Cannot send text: device protocol is unverified.")
+            return
+        }
         viewModelScope.launch {
             val result = protocolDispatcher.sendText(device, text)
             _lastCommandResult.value = result
@@ -164,6 +173,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     fun launchApp(appPackage: String) {
         val device = _activeDevice.value ?: return
+        if (_connectionState.value !is DeviceConnectionState.Connected) {
+            _lastCommandResult.value = CommandResult.Error("Cannot launch app: device protocol is unverified.")
+            return
+        }
         viewModelScope.launch {
             val result = protocolDispatcher.launchApp(device, appPackage)
             _lastCommandResult.value = result

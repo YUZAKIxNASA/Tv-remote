@@ -1,7 +1,7 @@
 # NASA WiFi Remote — Error Report & Resolution
 
-**Date:** 2026-10-27  
-**Status:** All initial errors diagnosed and resolved.
+**Date:** 2026-10-28  
+**Status:** All reported and diagnosed errors resolved and verified by automated tests.
 
 ---
 
@@ -58,3 +58,34 @@
   - Renamed to "NASA Remote", updated `metadata.json`, and generated custom adaptive launcher icons.
 - **Verification:**
   - Resources compiled and verified via `compile_applet`.
+
+---
+
+## Error 4: False Positive Connection & Broken Protocol Detection
+
+- **Symptoms:**
+  - Discovered TV is displayed as "Connected", but pressing any button displays:
+    `"Unable to connect. Check that both devices are connected to the same WiFi network."`
+- **Root Causes:**
+  1. **Generic TCP Socket Treated as Protocol Proof:** `MiTvHttpAdapter.ping()` and `RokuEcpAdapter.ping()` previously returned `true` if a simple `Socket().connect(ip, port)` succeeded. An open port (e.g., Google Cast port 8009 or an arbitrary device on port 6095) was treated as proof of a working Xiaomi TV remote controller!
+  2. **Unsafe mDNS Protocol Guessing in `resolveNsdService()`:** Devices discovered via `_googlecast._tcp.` (port 8009) or `_androidtvremote2._tcp.` (port 6466) whose service name contained "Mi" were blindly assigned `RemoteProtocol.MI_TV_HTTP`. Then, sending Xiaomi HTTP keyevent commands to port 8009 or 6466 caused connection rejection or timeout.
+  3. **Fallthrough to `UPNP_MEDIA`:** Any non-Mi mDNS service was automatically assigned `RemoteProtocol.UPNP_MEDIA`.
+  4. **Subnet Scan Assumption:** Probing open port 6095 or 8060 on the local subnet assumed the device was a Xiaomi or Roku TV without HTTP corroboration.
+- **Affected Files:**
+  - `/app/src/main/java/com/example/network/DeviceDiscoveryManager.kt`
+  - `/app/src/main/java/com/example/network/adapter/MiTvHttpAdapter.kt`
+  - `/app/src/main/java/com/example/network/adapter/RokuEcpAdapter.kt`
+  - `/app/src/main/java/com/example/network/ProtocolDispatcher.kt`
+  - `/app/src/main/java/com/example/model/RemoteProtocol.kt`
+  - `/app/src/main/java/com/example/model/ConnectionState.kt`
+  - `/app/src/main/java/com/example/ui/viewmodel/RemoteViewModel.kt`
+  - `/app/src/main/java/com/example/ui/screens/DeviceConnectionScreen.kt`
+- **Correction Applied:**
+  1. Added `ANDROID_TV_REMOTE`, `GOOGLE_CAST`, and `UNVERIFIED` to `RemoteProtocol`.
+  2. Added `ProtocolUnverified` and `PairingRequired` to `DeviceConnectionState` and created `ProtocolVerificationResult`.
+  3. Implemented true protocol verification in `MiTvHttpAdapter.verifyConnection()` (testing `/request?action=isalive`) and explicitly rejecting ports 8009, 6466, 6467.
+  4. Updated `resolveNsdService()` to strictly preserve registered service types (`_androidtvremote2`, `_googlecast`, `_airplay`) and never guess `MI_TV_HTTP` or `UPNP_MEDIA`.
+  5. Updated `probeLocalSubnet()` to require corroborating HTTP queries (`/request?action=isalive` and `/query/device-info`) before assigning TV protocols.
+  6. Implemented intelligent deduplication in `addDevice()` preserving high-fidelity metadata.
+- **Verification:**
+  - Automated tests in `ExampleUnitTest.kt` and `ExampleRobolectricTest.kt` pass with 100% success rate.

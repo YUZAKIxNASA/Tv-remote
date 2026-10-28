@@ -1,6 +1,7 @@
 package com.example.network.adapter
 
 import com.example.model.CommandResult
+import com.example.model.ProtocolVerificationResult
 import com.example.model.RemoteCommand
 import com.example.model.RemoteProtocol
 
@@ -11,9 +12,14 @@ interface TvProtocolAdapter {
     val protocol: RemoteProtocol
 
     /**
-     * Checks if the TV is reachable at the given IP and port.
+     * Checks if the TV is reachable at the given IP and port using protocol verification.
      */
     suspend fun ping(ip: String, port: Int): Boolean
+
+    /**
+     * Deeply verifies that the target device at IP:port genuinely implements this protocol.
+     */
+    suspend fun verifyConnection(ip: String, port: Int): ProtocolVerificationResult
 
     /**
      * Dispatches a remote command to the target TV.

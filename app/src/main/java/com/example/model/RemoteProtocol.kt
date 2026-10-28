@@ -1,7 +1,7 @@
 package com.example.model
 
 /**
- * Protocols supported by NASA WiFi Remote for various Smart TV ecosystems.
+ * Protocols supported or detected by NASA WiFi Remote for various Smart TV ecosystems.
  */
 enum class RemoteProtocol(
     val displayName: String,
@@ -18,6 +18,16 @@ enum class RemoteProtocol(
         defaultPort = 8060,
         defaultPath = "/keypress"
     ),
+    ANDROID_TV_REMOTE(
+        displayName = "Android TV Remote (v2)",
+        defaultPort = 6466,
+        defaultPath = ""
+    ),
+    GOOGLE_CAST(
+        displayName = "Google Cast",
+        defaultPort = 8009,
+        defaultPath = ""
+    ),
     UPNP_MEDIA(
         displayName = "UPnP / DLNA TV",
         defaultPort = 8080,
@@ -27,5 +37,10 @@ enum class RemoteProtocol(
         displayName = "Generic Network TV",
         defaultPort = 80,
         defaultPath = "/api"
+    ),
+    UNVERIFIED(
+        displayName = "Unverified Protocol",
+        defaultPort = 0,
+        defaultPath = ""
     )
 }

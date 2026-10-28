@@ -17,23 +17,37 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import java.net.URI
 import java.util.Collections
+import java.util.concurrent.TimeUnit
 
 /**
- * Robust Smart TV discovery manager supporting:
- * 1. SSDP / UPnP multicast probing (239.255.255.250:1900)
- * 2. Android NsdManager (mDNS _androidtvremote2, _googlecast, _http)
- * 3. Local Subnet TV Port scan (probe port 6095 for Mi TV, 8060 for Roku, etc.)
+ * Smart TV discovery manager supporting:
+ * 1. Android NsdManager (mDNS with strict service-type preservation)
+ * 2. SSDP / UPnP multicast probing (239.255.255.250:1900)
+ * 3. Local Subnet scan with protocol verification
+ *
+ * Guarantees:
+ * - _androidtvremote2._tcp is NEVER classified as Xiaomi HTTP.
+ * - _googlecast._tcp is NEVER classified as Xiaomi HTTP or UPnP.
+ * - Unknown services are marked UNVERIFIED instead of guessing.
+ * - Generic open ports do NOT establish verified protocol identity.
  */
 class DeviceDiscoveryManager(
     private val context: Context,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val probeClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(600, TimeUnit.MILLISECONDS)
+        .readTimeout(600, TimeUnit.MILLISECONDS)
+        .build()
 ) {
     private val tag = "DeviceDiscoveryManager"
 
@@ -61,16 +75,15 @@ class DeviceDiscoveryManager(
 
         scanJob = scope.launch(Dispatchers.IO) {
             try {
-                // Launch SSDP multicast probe concurrently
+                // 1. SSDP multicast search
                 launch { probeSsdp() }
 
-                // Launch mDNS discovery
+                // 2. mDNS discovery
                 launch { startMdnsDiscovery() }
 
-                // Launch Local Subnet Port scan for Mi TV (port 6095) and Roku (port 8060)
+                // 3. Subnet probe with corroborating protocol checks
                 launch { probeLocalSubnet() }
 
-                // Scan runs for 8 seconds then wraps up
                 delay(8000)
             } catch (e: Exception) {
                 Log.e(tag, "Discovery error: ${e.message}", e)
@@ -98,11 +111,14 @@ class DeviceDiscoveryManager(
         val manufacturer = when (protocol) {
             RemoteProtocol.MI_TV_HTTP -> "Xiaomi"
             RemoteProtocol.ROKU_ECP -> "Roku / TCL"
+            RemoteProtocol.ANDROID_TV_REMOTE -> "Android TV"
+            RemoteProtocol.GOOGLE_CAST -> "Google Cast"
             RemoteProtocol.UPNP_MEDIA -> "UPnP Media"
             RemoteProtocol.GENERIC_HTTP -> "Network TV"
+            RemoteProtocol.UNVERIFIED -> "Custom Device"
         }
         val device = DiscoveredDevice(
-            id = "manual_${ip}_$port",
+            id = "${ip}_$port",
             name = name.ifBlank { "$manufacturer ($ip)" },
             manufacturer = manufacturer,
             model = "Smart TV",
@@ -115,15 +131,63 @@ class DeviceDiscoveryManager(
         return device
     }
 
-    private fun addDevice(device: DiscoveredDevice) {
+    fun addDevice(device: DiscoveredDevice) {
         _discoveredDevices.update { list ->
-            val existingIndex = list.indexOfFirst { it.ipAddress == device.ipAddress && it.port == device.port }
+            val existingIndex = list.indexOfFirst {
+                it.ipAddress == device.ipAddress && it.port == device.port
+            }
+
             if (existingIndex >= 0) {
-                list.toMutableList().apply { this[existingIndex] = device }
+                val existing = list[existingIndex]
+                // Deduplication: Avoid replacing high-fidelity metadata with weaker metadata
+                val mergedDevice = mergeDeviceMetadata(existing, device)
+                list.toMutableList().apply { this[existingIndex] = mergedDevice }
             } else {
                 list + device
             }
         }
+    }
+
+    /**
+     * Merges two discovery records for the same endpoint, preserving higher-fidelity information.
+     */
+    private fun mergeDeviceMetadata(existing: DiscoveredDevice, update: DiscoveredDevice): DiscoveredDevice {
+        // 1. Protocol: Prefer verified / specific protocols over UNVERIFIED
+        val protocol = if (existing.protocol != RemoteProtocol.UNVERIFIED && update.protocol == RemoteProtocol.UNVERIFIED) {
+            existing.protocol
+        } else {
+            update.protocol
+        }
+
+        // 2. Name: Prefer meaningful names over generic fallbacks
+        val name = if (isGenericName(update.name) && !isGenericName(existing.name)) {
+            existing.name
+        } else {
+            update.name
+        }
+
+        // 3. Manufacturer: Prefer specific manufacturer over generic
+        val manufacturer = if (existing.manufacturer != "Smart TV" && existing.manufacturer != "Unknown Device" &&
+            (update.manufacturer == "Smart TV" || update.manufacturer == "Unknown Device")
+        ) {
+            existing.manufacturer
+        } else {
+            update.manufacturer
+        }
+
+        return existing.copy(
+            name = name,
+            manufacturer = manufacturer,
+            protocol = protocol,
+            isSaved = existing.isSaved || update.isSaved,
+            lastSeenTimestamp = System.currentTimeMillis()
+        )
+    }
+
+    private fun isGenericName(name: String): Boolean {
+        return name.startsWith("Smart TV (") ||
+                name.startsWith("Network Device (") ||
+                name.startsWith("Device on port ")
     }
 
     private fun acquireMulticastLock() {
@@ -187,11 +251,13 @@ class DeviceDiscoveryManager(
         }
     }
 
-    private fun parseSsdpResponse(ip: String, response: String) {
+    fun parseSsdpResponse(ip: String, response: String) {
         val upper = response.uppercase()
+
+        // Extract port from LOCATION header if present
+        var extractedPort = extractPortFromLocation(response)
         var name = "Smart TV ($ip)"
-        var protocol = RemoteProtocol.UPNP_MEDIA
-        var port = 8080
+        var protocol = RemoteProtocol.UNVERIFIED
         var manufacturer = "Smart TV"
 
         when {
@@ -199,30 +265,41 @@ class DeviceDiscoveryManager(
                 name = "Xiaomi Mi TV"
                 manufacturer = "Xiaomi"
                 protocol = RemoteProtocol.MI_TV_HTTP
-                port = 6095
+                if (extractedPort == null || extractedPort == 80) extractedPort = 6095
             }
-            upper.contains("ROKU") -> {
+            upper.contains("ROKU") || upper.contains("ROKU:ECP") -> {
                 name = "Roku Smart TV"
                 manufacturer = "Roku / TCL"
                 protocol = RemoteProtocol.ROKU_ECP
-                port = 8060
+                if (extractedPort == null || extractedPort == 80) extractedPort = 8060
+            }
+            upper.contains("URN:SCHEMAS-UPNP-ORG:DEVICE:MEDIARENDERER") -> {
+                name = "UPnP Media Renderer ($ip)"
+                manufacturer = "UPnP TV"
+                protocol = RemoteProtocol.UPNP_MEDIA
+                if (extractedPort == null) extractedPort = 8080
             }
             upper.contains("SAMSUNG") -> {
                 name = "Samsung Smart TV"
                 manufacturer = "Samsung"
+                protocol = RemoteProtocol.UNVERIFIED
             }
             upper.contains("LG") || upper.contains("WEBOS") -> {
                 name = "LG webOS TV"
                 manufacturer = "LG"
+                protocol = RemoteProtocol.UNVERIFIED
             }
             upper.contains("SONY") || upper.contains("BRAVIA") -> {
                 name = "Sony BRAVIA TV"
                 manufacturer = "Sony"
+                protocol = RemoteProtocol.UNVERIFIED
             }
         }
 
+        val port = extractedPort ?: protocol.defaultPort.takeIf { it > 0 } ?: 80
+
         val device = DiscoveredDevice(
-            id = "ssdp_${ip}_$port",
+            id = "${ip}_$port",
             name = name,
             manufacturer = manufacturer,
             ipAddress = ip,
@@ -232,8 +309,20 @@ class DeviceDiscoveryManager(
         addDevice(device)
     }
 
+    private fun extractPortFromLocation(response: String): Int? {
+        val locationLine = response.lines().firstOrNull { it.trim().startsWith("LOCATION:", ignoreCase = true) }
+            ?: return null
+        val urlString = locationLine.substringAfter(":", "").trim()
+        return try {
+            val uri = URI(urlString)
+            if (uri.port > 0) uri.port else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /**
-     * mDNS discovery via Android NsdManager
+     * mDNS discovery via Android NsdManager with strict service type preservation.
      */
     private fun startMdnsDiscovery() {
         if (nsdManager == null) return
@@ -259,7 +348,7 @@ class DeviceDiscoveryManager(
                     }
 
                     override fun onServiceFound(serviceInfo: NsdServiceInfo?) {
-                        serviceInfo?.let { resolveNsdService(it) }
+                        serviceInfo?.let { resolveNsdService(it, serviceType) }
                     }
 
                     override fun onServiceLost(serviceInfo: NsdServiceInfo?) {
@@ -274,7 +363,7 @@ class DeviceDiscoveryManager(
         }
     }
 
-    private fun resolveNsdService(serviceInfo: NsdServiceInfo) {
+    fun resolveNsdService(serviceInfo: NsdServiceInfo, registeredServiceType: String) {
         nsdManager?.resolveService(serviceInfo, object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {
                 Log.w(tag, "mDNS resolve failed: $errorCode")
@@ -286,18 +375,34 @@ class DeviceDiscoveryManager(
                 val port = resolvedInfo.port
                 val serviceName = resolvedInfo.serviceName
 
-                val protocol = if (port == 6095 || serviceName.contains("Mi", ignoreCase = true)) {
-                    RemoteProtocol.MI_TV_HTTP
-                } else if (port == 8060 || serviceName.contains("Roku", ignoreCase = true)) {
-                    RemoteProtocol.ROKU_ECP
-                } else {
-                    RemoteProtocol.UPNP_MEDIA
+                val effectiveType = resolvedInfo.serviceType?.ifBlank { registeredServiceType } ?: registeredServiceType
+                val normalizedType = effectiveType.trim().trimEnd('.').lowercase()
+
+                // Protocol determination based on genuine service type, NEVER solely on port or 'Mi' in service name
+                val (protocol, manufacturer) = when {
+                    normalizedType.contains("_androidtvremote2") || registeredServiceType.contains("_androidtvremote2") -> {
+                        val mfg = if (serviceName.contains("Xiaomi", ignoreCase = true) || serviceName.contains("Mi ", ignoreCase = true)) {
+                            "Xiaomi (Android TV)"
+                        } else {
+                            "Android TV"
+                        }
+                        RemoteProtocol.ANDROID_TV_REMOTE to mfg
+                    }
+                    normalizedType.contains("_googlecast") || registeredServiceType.contains("_googlecast") -> {
+                        RemoteProtocol.GOOGLE_CAST to "Google Cast / Android TV"
+                    }
+                    normalizedType.contains("_airplay") || registeredServiceType.contains("_airplay") -> {
+                        RemoteProtocol.UNVERIFIED to "Apple AirPlay"
+                    }
+                    else -> {
+                        RemoteProtocol.UNVERIFIED to "Unknown Device"
+                    }
                 }
 
                 val device = DiscoveredDevice(
-                    id = "mdns_${host}_$port",
-                    name = serviceName.ifBlank { "Android TV ($host)" },
-                    manufacturer = if (protocol == RemoteProtocol.MI_TV_HTTP) "Xiaomi" else "Android TV",
+                    id = "${host}_$port",
+                    name = serviceName.ifBlank { "Android Device ($host)" },
+                    manufacturer = manufacturer,
                     ipAddress = host,
                     port = port,
                     protocol = protocol
@@ -318,15 +423,13 @@ class DeviceDiscoveryManager(
     }
 
     /**
-     * Subnet probe: Gets phone's current local subnet IP (e.g. 192.168.1.X)
-     * and probes the specific TV ports (6095 for Mi TV, 8060 for Roku)
-     * on local network IPs.
+     * Subnet probe: scans local IPs and requires corroborating HTTP protocol verification
+     * before assigning a specific TV remote protocol.
      */
     private suspend fun probeLocalSubnet() = withContext(Dispatchers.IO) {
         val localIp = getLocalIpAddress() ?: return@withContext
         val subnet = localIp.substringBeforeLast(".") + "."
 
-        // Scan common host address ranges (1..20 and local neighborhood)
         val hostsToProbe = mutableListOf<String>()
         val lastOctet = localIp.substringAfterLast(".").toIntOrNull() ?: 100
         for (i in (lastOctet - 10).coerceAtLeast(1)..(lastOctet + 10).coerceAtMost(254)) {
@@ -337,36 +440,67 @@ class DeviceDiscoveryManager(
             if (!hostsToProbe.contains(ip)) hostsToProbe.add(ip)
         }
 
-        // Test each host concurrently with 250ms socket connect
         hostsToProbe.forEach { targetIp ->
             launch {
-                // Check Mi TV port 6095
+                // Check port 6095 with HTTP corroboration
                 if (isPortOpen(targetIp, 6095, 250)) {
+                    val isVerifiedMiTv = verifyMiTvSubnet(targetIp, 6095)
                     addDevice(
                         DiscoveredDevice(
-                            id = "subnet_${targetIp}_6095",
-                            name = "Xiaomi Mi TV ($targetIp)",
-                            manufacturer = "Xiaomi",
+                            id = "${targetIp}_6095",
+                            name = if (isVerifiedMiTv) "Xiaomi Mi TV ($targetIp)" else "Device on port 6095 ($targetIp)",
+                            manufacturer = if (isVerifiedMiTv) "Xiaomi" else "Unknown",
                             ipAddress = targetIp,
                             port = 6095,
-                            protocol = RemoteProtocol.MI_TV_HTTP
+                            protocol = if (isVerifiedMiTv) RemoteProtocol.MI_TV_HTTP else RemoteProtocol.UNVERIFIED
                         )
                     )
                 }
-                // Check Roku port 8060
+
+                // Check port 8060 with HTTP corroboration
                 if (isPortOpen(targetIp, 8060, 250)) {
+                    val isVerifiedRoku = verifyRokuSubnet(targetIp, 8060)
                     addDevice(
                         DiscoveredDevice(
-                            id = "subnet_${targetIp}_8060",
-                            name = "Roku Smart TV ($targetIp)",
-                            manufacturer = "Roku / TCL",
+                            id = "${targetIp}_8060",
+                            name = if (isVerifiedRoku) "Roku Smart TV ($targetIp)" else "Device on port 8060 ($targetIp)",
+                            manufacturer = if (isVerifiedRoku) "Roku / TCL" else "Unknown",
                             ipAddress = targetIp,
                             port = 8060,
-                            protocol = RemoteProtocol.ROKU_ECP
+                            protocol = if (isVerifiedRoku) RemoteProtocol.ROKU_ECP else RemoteProtocol.UNVERIFIED
                         )
                     )
                 }
             }
+        }
+    }
+
+    private fun verifyMiTvSubnet(ip: String, port: Int): Boolean {
+        return try {
+            val request = Request.Builder()
+                .url("http://$ip:$port/request?action=isalive")
+                .get()
+                .build()
+            probeClient.newCall(request).execute().use { response ->
+                response.isSuccessful
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun verifyRokuSubnet(ip: String, port: Int): Boolean {
+        return try {
+            val request = Request.Builder()
+                .url("http://$ip:$port/query/device-info")
+                .get()
+                .build()
+            probeClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                response.isSuccessful && body.contains("<device-info", ignoreCase = true)
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
