@@ -1,0 +1,6 @@
+{
+  "name": "NASA Remote",
+  "description": "WiFi Smart TV universal remote controller for Mi TV, Android TV, and network-connected TVs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

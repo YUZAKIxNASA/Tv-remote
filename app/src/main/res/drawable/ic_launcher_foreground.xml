@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group>
+        <!-- Remote body -->
+        <path
+            android:fillColor="#2563EB"
+            android:pathData="M44,30 L64,30 C67.3,30 70,32.7 70,36 L70,78 C70,81.3 67.3,84 64,84 L44,84 C40.7,84 38,81.3 38,78 L38,36 C38,32.7 40.7,30 44,30 Z" />
+        <!-- Remote Power indicator / infrared head -->
+        <path
+            android:fillColor="#1D4ED8"
+            android:pathData="M51,27 L57,27 C58,27 58.5,27.5 58.5,28.5 L58.5,30 L49.5,30 L49.5,28.5 C49.5,27.5 50,27 51,27 Z" />
+        <!-- Remote Buttons -->
+        <!-- Power Button -->
+        <path
+            android:fillColor="#EF4444"
+            android:pathData="M44,36 A3,3 0 1,0 44,42 A3,3 0 1,0 44,36 Z" />
+        <!-- OK / D-pad circle -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M54,53 A7,7 0 1,0 54,67 A7,7 0 1,0 54,53 Z" />
+        <path
+            android:fillColor="#2563EB"
+            android:pathData="M54,57 A3,3 0 1,0 54,63 A3,3 0 1,0 54,57 Z" />
+        <!-- Vol / Ch bars -->
+        <path
+            android:fillColor="#93C5FD"
+            android:pathData="M43,72 L49,72 A1.5,1.5 0 0,1 49,75 L43,75 A1.5,1.5 0 0,1 43,72 Z" />
+        <path
+            android:fillColor="#93C5FD"
+            android:pathData="M59,72 L65,72 A1.5,1.5 0 0,1 65,75 L59,75 A1.5,1.5 0 0,1 59,72 Z" />
+        <!-- WiFi signals emitted from top -->
+        <path
+            android:fillColor="#2563EB"
+            android:pathData="M54,16 C48.5,16 43.5,18.2 39.8,21.8 L42.6,24.6 C45.5,21.8 49.5,20 54,20 C58.5,20 62.5,21.8 65.4,24.6 L68.2,21.8 C64.5,18.2 59.5,16 54,16 Z" />
+        <path
+            android:fillColor="#3B82F6"
+            android:pathData="M54,21 C50.5,21 47.3,22.4 45,24.7 L47.8,27.5 C49.4,25.9 51.6,25 54,25 C56.4,25 58.6,25.9 60.2,27.5 L63,24.7 C60.7,22.4 57.5,21 54,21 Z" />
+    </group>
+</vector>
